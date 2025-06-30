@@ -1,0 +1,59 @@
+name: CI/CD to GKE with Google Cloud Auth
+
+on:
+  push:
+    branches:
+      - main  # or your deployment branch
+
+permissions:
+  contents: read
+  id-token: write  # required for Workload Identity Federation
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          # Use Workload Identity Federation (recommended)
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+
+          # Alternatively, use service account key JSON (less secure)
+          # credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+
+      - name: Configure GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: your-gke-cluster-name
+          location: your-gke-cluster-zone-or-region
+          project_id: your-gcp-project-id
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build Docker image
+        run: |
+          docker build -t gcr.io/${{ secrets.GCP_PROJECT_ID }}/your-app:${{ github.sha }} .
+
+      - name: Push Docker image to GCR
+        run: |
+          docker push gcr.io/${{ secrets.GCP_PROJECT_ID }}/your-app:${{ github.sha }}
+
+      - name: Prepare deployment manifest
+        run: |
+          # Replace image tag in deployment.yaml dynamically
+          sed -i "s|image: gcr.io/.*/your-app:.*|image: gcr.io/${{ secrets.GCP_PROJECT_ID }}/your-app:${{ github.sha }}|" deployment.yaml
+
+      - name: Deploy to Kubernetes
+        run: |
+          kubectl apply -f deployment.yaml
+
+      - name: Check rollout status
+        run: |
+          kubectl rollout status deployment/your-deployment-name
